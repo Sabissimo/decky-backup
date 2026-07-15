@@ -1,8 +1,10 @@
 import {
   ButtonItem,
   ConfirmModal,
+  DialogButton,
   DropdownItem,
   Field,
+  Focusable,
   PanelSection,
   PanelSectionRow,
   showModal,
@@ -18,7 +20,7 @@ import {
   removeEventListener,
   toaster,
 } from "@decky/api";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FaArchive,
   FaGoogleDrive,
@@ -515,6 +517,13 @@ function Content() {
 
   const selectedComponents = COMPONENTS.map((c) => c.key).filter((k) => enabled[k]);
 
+  // The selected destination lives in a ref inside refresh: with destId as
+  // a dependency, every dropdown selection re-created the callback and
+  // re-ran the mount effect, and the resulting refetch/re-render cascade
+  // snapped the dropdown back to "Internal storage".
+  const destIdRef = useRef(destId);
+  destIdRef.current = destId;
+
   const refresh = useCallback(async () => {
     const [dests, list, status, sched] = await Promise.all([
       getDestinations(),
@@ -526,8 +535,15 @@ function Content() {
     setBackups(list);
     setGdrive(status);
     setScheduleState(sched);
-    if (!dests.some((d) => d.id === destId)) setDestId("internal");
-  }, [destId]);
+    if (!dests.some((d) => d.id === destIdRef.current)) setDestId("internal");
+  }, []);
+
+  // Stable option identity: rebuilding rgOptions every render makes
+  // DropdownItem forget its selection.
+  const destOptions = useMemo(
+    () => destinations.map((d) => ({ data: d.id, label: d.label })),
+    [destinations],
+  );
 
   const patchSchedule = async (patch: Partial<Schedule>) => {
     setScheduleState(await setSchedule(patch));
@@ -643,7 +659,7 @@ function Content() {
         <PanelSectionRow>
           <DropdownItem
             label="Destination"
-            rgOptions={destinations.map((d) => ({ data: d.id, label: d.label }))}
+            rgOptions={destOptions}
             selectedOption={destId}
             onChange={(option) => setDestId(option.data as string)}
           />
@@ -678,14 +694,25 @@ function Content() {
               }
               description={`${formatSize(b.size)} · ${locationLabel(b.location)}${b.auto ? " · auto" : ""}`}
             >
-              <div style={{ display: "flex", gap: "8px" }}>
-                <ButtonItem layout="inline" disabled={busy} onClick={() => onRestore(b)}>
+              {/* ButtonItem is a full-width row control - two of them in a
+                  flex row overflow the panel. DialogButton with a pinned
+                  width is the compact icon-button pattern. */}
+              <Focusable style={{ display: "flex", gap: "8px" }} flow-children="horizontal">
+                <DialogButton
+                  style={{ minWidth: 0, width: "44px", padding: "10px 0" }}
+                  disabled={busy}
+                  onClick={() => onRestore(b)}
+                >
                   <FaUndo />
-                </ButtonItem>
-                <ButtonItem layout="inline" disabled={busy} onClick={() => onDelete(b)}>
+                </DialogButton>
+                <DialogButton
+                  style={{ minWidth: 0, width: "44px", padding: "10px 0" }}
+                  disabled={busy}
+                  onClick={() => onDelete(b)}
+                >
                   <FaTrash />
-                </ButtonItem>
-              </div>
+                </DialogButton>
+              </Focusable>
             </Field>
           </PanelSectionRow>
         ))}
@@ -723,7 +750,7 @@ function Content() {
               <DropdownItem
                 label="Destination"
                 description="Falls back to internal storage if unavailable"
-                rgOptions={destinations.map((d) => ({ data: d.id, label: d.label }))}
+                rgOptions={destOptions}
                 selectedOption={
                   destinations.some((d) => d.id === schedule.dest_id)
                     ? schedule.dest_id
