@@ -1,0 +1,11 @@
+{
+  "name": "Deck Backup",
+  "author": "Sabissimo",
+  "flags": ["root"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["backup", "utility"],
+    "description": "One-tap backup and restore of your entire Decky setup: plugin settings, CSS themes, and installed plugin list. Back up to internal storage or SD card.",
+    "image": "https://opengraph.githubassets.com/1/Sabissimo/decky-backup"
+  }
+}
