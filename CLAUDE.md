@@ -15,7 +15,7 @@ CI (`.github/workflows/build.yml`) runs all three on push, assembles the plugin 
 ## Architecture
 
 - `main.py` — plugin backend (class `Plugin`, async methods callable from the frontend via `@decky/api` `callable`). Pure stdlib. Blocking work (tar, network) runs in executor threads; progress goes to the frontend via `decky.emit` events (`backup_progress`, `auto_backup`).
-- `py_modules/gdrive.py` — stdlib-only Google Drive client: OAuth device flow (`drive.file` scope), resumable upload, list/download/delete. Bundled shared OAuth client in `DEFAULT_CLIENT_ID`/`DEFAULT_CLIENT_SECRET`; a user client in `~/homebrew/settings/decky-backup/gdrive_client.json` takes precedence.
+- `py_modules/gdrive.py` — stdlib-only Google Drive client: OAuth device flow (`drive.file` scope), resumable upload, list/download/delete. Bundled shared OAuth client in `DEFAULT_CLIENT_ID`/`DEFAULT_CLIENT_SECRET`; a user client in `~/homebrew/settings/decky-backup/gdrive_client.json` takes precedence. The bundled client's Google Cloud setup is complete and live-verified (Google Cloud project `decky-backup`: device-code flow tested, consent screen **in production** so there are no test-user limits, Drive API enabled) — do not redo it.
 - `src/index.tsx` — the whole frontend (QAM panel + modals). Auto-reinstall calls Decky Loader's own `utilities/install_plugin(s)` routes through the `window.DeckyBackend` global so the loader shows its native confirm modal and does verified downloads.
 
 Backup archives: `deckbackup-[auto-]YYYYMMDD-HHMMSS.tar.gz` containing `manifest.json` (plugin list + versions) plus `settings/`, `themes/`, `data/` subtrees. Cloud backups are addressed as `gdrive:<fileId>` and cached under the plugin runtime dir on restore.
