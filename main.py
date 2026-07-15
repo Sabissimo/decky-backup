@@ -13,7 +13,7 @@ import decky
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "py_modules"))
 import gdrive  # noqa: E402
 
-VERSION = "0.4.1"
+VERSION = "0.4.4"
 
 # What we back up, relative to the Decky homebrew root (~/homebrew).
 # "settings" holds every plugin's config (PowerTools profiles, etc.),

@@ -20,6 +20,23 @@ CI (`.github/workflows/build.yml`) runs all three on push, assembles the plugin 
 
 Backup archives: `deckbackup-[auto-]YYYYMMDD-HHMMSS.tar.gz` containing `manifest.json` (plugin list + versions) plus `settings/`, `themes/`, `data/` subtrees. Cloud backups are addressed as `gdrive:<fileId>` and cached under the plugin runtime dir on restore.
 
+## Deck-runtime facts (live-debugged on real hardware, 2026-07-15)
+
+- Decky's embedded Python can't verify HTTPS (its OpenSSL default CA paths
+  don't exist on SteamOS) — every `urlopen` in `gdrive.py` passes the
+  shared `_SSL_CONTEXT`, which falls back to
+  `/etc/ssl/certs/ca-certificates.crt`. Keep `context=` on any new call.
+- On the Deck, a dropdown opens a full-screen menu; closing it REMOUNTS
+  the QAM content and resets useState. The manual destination lives at
+  module scope (`rememberedDestId`) so the pick survives — don't move it
+  back into plain state.
+- `ButtonItem` is a full-width row control; compact icon buttons in a row
+  are `DialogButton`s with a fixed width inside a `Focusable`.
+- This plugin is root-flagged: its installed files on the Deck are
+  root-owned (deploying by scp needs /tmp + `sudo mv`).
+- Verified end-to-end on hardware: device-flow connect, manual backup to
+  Google Drive, and the destination dropdown holding its selection.
+
 ## Constraints and decisions
 
 - No "backup on shutdown": Decky kills plugins during `_unload`; the interval scheduler (30-min tick, catches up after sleep) is the reliable substitute.
