@@ -6,6 +6,7 @@ import {
   PanelSection,
   PanelSectionRow,
   showModal,
+  SliderField,
   staticClasses,
   TextField,
   ToggleField,
@@ -38,7 +39,26 @@ interface BackupEntry {
   name: string;
   size: number;
   mtime: number;
+  auto?: boolean;
   location: "internal" | "sd" | "gdrive";
+}
+
+interface Schedule {
+  enabled: boolean;
+  frequency: "daily" | "weekly";
+  dest_id: string;
+  keep: number;
+  include_data: boolean;
+  last_run: number;
+}
+
+interface AutoBackupEvent {
+  success: boolean;
+  size?: number;
+  dest?: string;
+  warning?: string | null;
+  pruned?: number;
+  error?: string;
 }
 
 interface PluginRef {
@@ -99,6 +119,8 @@ const gdriveSetClient = callable<[clientId: string, clientSecret: string], Backu
 const gdriveAuthStart = callable<[], AuthStart>("gdrive_auth_start");
 const gdriveAuthPoll = callable<[], { status: string; error?: string }>("gdrive_auth_poll");
 const gdriveDisconnect = callable<[], BackupResult>("gdrive_disconnect");
+const getSchedule = callable<[], Schedule>("get_schedule");
+const setSchedule = callable<[patch: Partial<Schedule>], Schedule>("set_schedule");
 
 const COMPONENTS = [
   { key: "settings", label: "Plugin settings", note: "All plugin configs (PowerTools profiles, etc.)" },
@@ -364,22 +386,29 @@ function Content() {
   const [estimate, setEstimate] = useState<number | null>(null);
   const [backups, setBackups] = useState<BackupEntry[]>([]);
   const [gdrive, setGdrive] = useState<GDriveStatus | null>(null);
+  const [schedule, setScheduleState] = useState<Schedule | null>(null);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
 
   const selectedComponents = COMPONENTS.map((c) => c.key).filter((k) => enabled[k]);
 
   const refresh = useCallback(async () => {
-    const [dests, list, status] = await Promise.all([
+    const [dests, list, status, sched] = await Promise.all([
       getDestinations(),
       listBackups(),
       gdriveStatus(),
+      getSchedule(),
     ]);
     setDestinations(dests);
     setBackups(list);
     setGdrive(status);
+    setScheduleState(sched);
     if (!dests.some((d) => d.id === destId)) setDestId("internal");
   }, [destId]);
+
+  const patchSchedule = async (patch: Partial<Schedule>) => {
+    setScheduleState(await setSchedule(patch));
+  };
 
   useEffect(() => {
     refresh();
@@ -524,7 +553,7 @@ function Content() {
                   {formatDate(b.mtime)}
                 </span>
               }
-              description={`${formatSize(b.size)} · ${locationLabel(b.location)}`}
+              description={`${formatSize(b.size)} · ${locationLabel(b.location)}${b.auto ? " · auto" : ""}`}
             >
               <div style={{ display: "flex", gap: "8px" }}>
                 <ButtonItem layout="inline" disabled={busy} onClick={() => onRestore(b)}>
@@ -537,6 +566,71 @@ function Content() {
             </Field>
           </PanelSectionRow>
         ))}
+      </PanelSection>
+
+      <PanelSection title="Automatic backups">
+        <PanelSectionRow>
+          <ToggleField
+            label="Enabled"
+            description={
+              schedule?.enabled && schedule.last_run > 0
+                ? `Last run: ${formatDate(schedule.last_run)}`
+                : "Runs in the background while the Deck is awake"
+            }
+            checked={schedule?.enabled ?? false}
+            onChange={(value) => patchSchedule({ enabled: value })}
+          />
+        </PanelSectionRow>
+        {schedule?.enabled && (
+          <>
+            <PanelSectionRow>
+              <DropdownItem
+                label="Frequency"
+                rgOptions={[
+                  { data: "daily", label: "Daily" },
+                  { data: "weekly", label: "Weekly" },
+                ]}
+                selectedOption={schedule.frequency}
+                onChange={(option) =>
+                  patchSchedule({ frequency: option.data as Schedule["frequency"] })
+                }
+              />
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <DropdownItem
+                label="Destination"
+                description="Falls back to internal storage if unavailable"
+                rgOptions={destinations.map((d) => ({ data: d.id, label: d.label }))}
+                selectedOption={
+                  destinations.some((d) => d.id === schedule.dest_id)
+                    ? schedule.dest_id
+                    : "internal"
+                }
+                onChange={(option) => patchSchedule({ dest_id: option.data as string })}
+              />
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <SliderField
+                label="Keep last"
+                description="Older automatic backups are deleted; manual backups are never touched"
+                value={schedule.keep}
+                min={1}
+                max={20}
+                step={1}
+                showValue
+                onChange={(value) => patchSchedule({ keep: value })}
+              />
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <ToggleField
+                label="Include plugin data"
+                description="Runtime data — can be large"
+                checked={schedule.include_data}
+                onChange={(value) => patchSchedule({ include_data: value })}
+              />
+            </PanelSectionRow>
+          </>
+        )}
       </PanelSection>
 
       <PanelSection title="Google Drive">
@@ -572,10 +666,34 @@ function Content() {
 }
 
 export default definePlugin(() => {
+  // Registered at plugin level so scheduled-backup toasts appear even
+  // when the QAM panel is closed.
+  const autoListener = addEventListener<[result: AutoBackupEvent]>(
+    "auto_backup",
+    (result) => {
+      if (result.success) {
+        toaster.toast({
+          title: "Automatic backup complete",
+          body: `${formatSize(result.size ?? 0)} saved to ${result.dest ?? "internal storage"}${
+            result.warning ? ` (${result.warning})` : ""
+          }`,
+        });
+      } else {
+        toaster.toast({
+          title: "Automatic backup failed",
+          body: result.error ?? "Unknown error",
+        });
+      }
+    }
+  );
+
   return {
     name: "Deck Backup",
     titleView: <div className={staticClasses.Title}>Deck Backup</div>,
     content: <Content />,
     icon: <FaArchive />,
+    onDismount() {
+      removeEventListener("auto_backup", autoListener);
+    },
   };
 });

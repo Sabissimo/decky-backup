@@ -22,6 +22,7 @@ Backups are timestamped `.tar.gz` archives written to internal storage (`~/homeb
 - Browse, restore, and delete backups from the Quick Access Menu — local and cloud in one list
 - **Per-plugin restore**: pick exactly which plugins' settings/data to restore from a backup (or restore everything)
 - Restore tells you which plugins from the backup are missing so you can reinstall them from the store
+- **Automatic backups**: daily or weekly, to any destination, with retention (keep last N — older auto-backups are pruned, manual ones never touched)
 - Backups survive plugin uninstall — they're never deleted automatically
 
 ## Google Drive setup (one-time, ~2 minutes)
@@ -38,10 +39,22 @@ You bring your own (free) OAuth client:
 
 Then hit **Connect Google Drive** in the plugin and follow the code prompt.
 
+## Automatic backups
+
+Enable in the **Automatic backups** section: pick daily/weekly, a destination, and how many auto-backups to keep. The scheduler checks every 30 minutes while the Deck is awake and catches up after sleep or reboot (first check ~5 minutes after boot). If the chosen destination is unavailable (SD card ejected, Drive disconnected), it falls back to internal storage and says so in the completion toast.
+
+Backups made on a schedule are tagged `auto` in the list and named `deckbackup-auto-*`; only these are subject to retention pruning.
+
+> Why no "backup on shutdown"? Decky gives plugins almost no time during unload — a tar + cloud upload would be killed mid-write, silently producing corrupt backups. An interval scheduler that catches up on wake is reliable; a shutdown hook is not.
+
+## Installing from CI builds
+
+Every push to `main` builds an installable zip via GitHub Actions (see the workflow run's **Artifacts**); tagged releases (`v*`) attach the zip to a GitHub Release. To sideload: extract so you get `~/homebrew/plugins/decky-backup/`, then restart Decky Loader.
+
 ## Roadmap
 
+- [x] Scheduled automatic backups with retention
 - [ ] Automatic reinstall of missing plugins from the Decky store on restore
-- [ ] Scheduled automatic backups (daily / on shutdown)
 - [ ] Shared OAuth client for store release (skip the Cloud Console setup)
 - [ ] Other cloud destinations (Dropbox, OneDrive, rclone remotes)
 - [ ] Controller layout + non-Steam shortcut backup

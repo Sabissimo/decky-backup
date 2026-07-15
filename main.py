@@ -13,7 +13,7 @@ import decky
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "py_modules"))
 import gdrive  # noqa: E402
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # What we back up, relative to the Decky homebrew root (~/homebrew).
 # "settings" holds every plugin's config (PowerTools profiles, etc.),
@@ -25,12 +25,25 @@ COMPONENT_DIRS = {
 }
 
 ARCHIVE_PREFIX = "deckbackup-"
+AUTO_MARKER = f"{ARCHIVE_PREFIX}auto-"
 MANIFEST_NAME = "manifest.json"
 SD_BACKUP_DIRNAME = "decky-backups"
 GDRIVE_PREFIX = "gdrive:"
 
 # Our own runtime dir lives under homebrew/data — never back up our own backups.
 OWN_DATA_DIRNAME = "decky-backup"
+
+SCHEDULE_FILE = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "schedule.json")
+DEFAULT_SCHEDULE = {
+    "enabled": False,
+    "frequency": "daily",  # daily | weekly
+    "dest_id": "internal",
+    "keep": 5,
+    "include_data": False,
+    "last_run": 0,
+}
+FREQUENCY_SECONDS = {"daily": 24 * 3600, "weekly": 7 * 24 * 3600}
+SCHEDULER_TICK = 1800  # check every 30 min while awake
 
 
 def _internal_backup_dir() -> str:
@@ -39,6 +52,22 @@ def _internal_backup_dir() -> str:
 
 def _cloud_cache_dir() -> str:
     return os.path.join(decky.DECKY_PLUGIN_RUNTIME_DIR, "cache")
+
+
+def _load_schedule() -> dict:
+    schedule = dict(DEFAULT_SCHEDULE)
+    try:
+        with open(SCHEDULE_FILE, encoding="utf-8") as f:
+            schedule.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return schedule
+
+
+def _save_schedule(schedule: dict):
+    os.makedirs(os.path.dirname(SCHEDULE_FILE), exist_ok=True)
+    with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
+        json.dump(schedule, f, indent=2)
 
 
 def _sd_mounts() -> list[str]:
@@ -92,15 +121,17 @@ def _dir_size(path: str) -> int:
     return total
 
 
-def _create_archive(dest_dir: str, components: list[str], progress) -> dict:
+def _create_archive(dest_dir: str, components: list[str], progress, auto: bool = False) -> dict:
     """Build the tar.gz. Runs in an executor thread; `progress(stage)` reports back."""
     os.makedirs(dest_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    archive_path = os.path.join(dest_dir, f"{ARCHIVE_PREFIX}{stamp}.tar.gz")
+    prefix = AUTO_MARKER if auto else ARCHIVE_PREFIX
+    archive_path = os.path.join(dest_dir, f"{prefix}{stamp}.tar.gz")
 
     manifest = {
         "created": datetime.now().isoformat(timespec="seconds"),
         "components": components,
+        "auto": auto,
         "plugins": _installed_plugins(),
         "deck_backup_version": VERSION,
     }
@@ -240,6 +271,25 @@ class Plugin:
             gdrive.download(file_id, cached)
         return cached
 
+    async def _do_backup(self, components: list[str], dest_path: str, auto: bool = False) -> dict:
+        """Shared backup path for manual and scheduled backups. Raises on failure."""
+        progress = self._progress_cb()
+        to_gdrive = dest_path == "gdrive"
+        result = await self.loop.run_in_executor(
+            None, _create_archive,
+            _internal_backup_dir() if to_gdrive else dest_path,
+            components, progress, auto,
+        )
+        if to_gdrive:
+            progress("Uploading to Google Drive…")
+            name = os.path.basename(result["path"])
+            file_id = await self.loop.run_in_executor(
+                None, gdrive.upload, result["path"], name)
+            os.remove(result["path"])
+            result["path"] = f"{GDRIVE_PREFIX}{file_id}"
+        decky.logger.info(f"Backup written: {result['path']} ({result['size']} bytes)")
+        return result
+
     async def get_destinations(self) -> list[dict]:
         dests = [{"id": "internal", "label": "Internal storage", "path": _internal_backup_dir()}]
         for mount in _sd_mounts():
@@ -264,22 +314,8 @@ class Plugin:
 
     async def create_backup(self, components: list[str], dest_path: str) -> dict:
         decky.logger.info(f"Creating backup of {components} -> {dest_path}")
-        progress = self._progress_cb()
-        to_gdrive = dest_path == "gdrive"
         try:
-            result = await self.loop.run_in_executor(
-                None, _create_archive,
-                _internal_backup_dir() if to_gdrive else dest_path,
-                components, progress,
-            )
-            if to_gdrive:
-                progress("Uploading to Google Drive…")
-                name = os.path.basename(result["path"])
-                file_id = await self.loop.run_in_executor(
-                    None, gdrive.upload, result["path"], name)
-                os.remove(result["path"])
-                result["path"] = f"{GDRIVE_PREFIX}{file_id}"
-            decky.logger.info(f"Backup written: {result['path']} ({result['size']} bytes)")
+            result = await self._do_backup(components, dest_path)
             return {"success": True, **result}
         except Exception as e:
             decky.logger.exception("Backup failed")
@@ -304,6 +340,7 @@ class Plugin:
                         "name": name,
                         "size": stat.st_size,
                         "mtime": stat.st_mtime,
+                        "auto": name.startswith(AUTO_MARKER),
                         "location": "internal" if directory.startswith(
                             decky.DECKY_PLUGIN_RUNTIME_DIR) else "sd",
                     })
@@ -319,6 +356,7 @@ class Plugin:
                         "name": entry["name"],
                         "size": entry["size"],
                         "mtime": entry["mtime"],
+                        "auto": entry["name"].startswith(AUTO_MARKER),
                         "location": "gdrive",
                     })
             except Exception as e:
@@ -368,6 +406,108 @@ class Plugin:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    # ---- Scheduled backups ----
+
+    async def get_schedule(self) -> dict:
+        return _load_schedule()
+
+    async def set_schedule(self, patch: dict) -> dict:
+        schedule = _load_schedule()
+        for key in DEFAULT_SCHEDULE:
+            if key in patch:
+                schedule[key] = patch[key]
+        _save_schedule(schedule)
+        return schedule
+
+    def _resolve_schedule_dest(self, dest_id: str) -> tuple[str, str, str | None]:
+        """(dest_path, label, warning) for a stored destination id, with fallback."""
+        if dest_id == "gdrive":
+            if gdrive.is_connected():
+                return "gdrive", "Google Drive", None
+            return _internal_backup_dir(), "Internal storage", "Google Drive not connected"
+        if dest_id != "internal":
+            if os.path.ismount(dest_id) and os.access(dest_id, os.W_OK):
+                return os.path.join(dest_id, SD_BACKUP_DIRNAME), "SD card", None
+            return _internal_backup_dir(), "Internal storage", "SD card not mounted"
+        return _internal_backup_dir(), "Internal storage", None
+
+    def _prune_auto_backups_local(self, dest_dir: str, keep: int) -> int:
+        if not os.path.isdir(dest_dir):
+            return 0
+        entries = []
+        for name in os.listdir(dest_dir):
+            if name.startswith(AUTO_MARKER) and name.endswith(".tar.gz"):
+                path = os.path.join(dest_dir, name)
+                try:
+                    entries.append((os.stat(path).st_mtime, path))
+                except OSError:
+                    continue
+        entries.sort(reverse=True)
+        pruned = 0
+        for _mtime, path in entries[keep:]:
+            try:
+                os.remove(path)
+                pruned += 1
+            except OSError as e:
+                decky.logger.warning(f"Could not prune {path}: {e}")
+        return pruned
+
+    async def _prune_auto_backups(self, dest_path: str, keep: int) -> int:
+        if dest_path == "gdrive":
+            entries = await self.loop.run_in_executor(
+                None, gdrive.list_backups, AUTO_MARKER)
+            entries.sort(key=lambda e: e["mtime"], reverse=True)
+            pruned = 0
+            for entry in entries[keep:]:
+                await self.loop.run_in_executor(None, gdrive.delete, entry["id"])
+                pruned += 1
+            return pruned
+        return await self.loop.run_in_executor(
+            None, self._prune_auto_backups_local, dest_path, keep)
+
+    async def _run_auto_backup(self, schedule: dict):
+        components = ["settings", "themes"] + (["data"] if schedule.get("include_data") else [])
+        dest_path, label, warning = self._resolve_schedule_dest(schedule.get("dest_id", "internal"))
+        if warning:
+            decky.logger.warning(f"Auto backup fallback: {warning}")
+        result = await self._do_backup(components, dest_path, auto=True)
+        pruned = 0
+        try:
+            pruned = await self._prune_auto_backups(dest_path, int(schedule.get("keep", 5)))
+        except Exception as e:
+            decky.logger.warning(f"Prune failed: {e}")
+        await decky.emit("auto_backup", {
+            "success": True,
+            "size": result["size"],
+            "dest": label,
+            "warning": warning,
+            "pruned": pruned,
+        })
+
+    async def _scheduler(self):
+        # Give the system a few minutes after boot before doing any work.
+        await asyncio.sleep(300)
+        while True:
+            try:
+                schedule = _load_schedule()
+                if schedule.get("enabled"):
+                    due = FREQUENCY_SECONDS.get(schedule.get("frequency", "daily"),
+                                                FREQUENCY_SECONDS["daily"])
+                    if time.time() - float(schedule.get("last_run", 0)) >= due:
+                        decky.logger.info("Running scheduled backup")
+                        try:
+                            await self._run_auto_backup(schedule)
+                            schedule["last_run"] = time.time()
+                            _save_schedule(schedule)
+                        except Exception as e:
+                            decky.logger.exception("Scheduled backup failed")
+                            await decky.emit("auto_backup", {"success": False, "error": str(e)})
+            except Exception:
+                decky.logger.exception("Scheduler tick failed")
+            await asyncio.sleep(SCHEDULER_TICK)
+
+    # ---- Google Drive ----
+
     async def gdrive_status(self) -> dict:
         return {"has_client": gdrive.has_client(), "connected": gdrive.is_connected()}
 
@@ -395,6 +535,8 @@ class Plugin:
         gdrive.disconnect()
         return {"success": True}
 
+    # ---- Lifecycle ----
+
     async def _main(self):
         self.loop = asyncio.get_event_loop()
         os.makedirs(_internal_backup_dir(), exist_ok=True)
@@ -406,9 +548,13 @@ class Plugin:
                     os.remove(os.path.join(cache, name))
                 except OSError:
                     pass
+        self.scheduler_task = self.loop.create_task(self._scheduler())
         decky.logger.info("Deck Backup loaded")
 
     async def _unload(self):
+        task = getattr(self, "scheduler_task", None)
+        if task:
+            task.cancel()
         decky.logger.info("Deck Backup unloaded")
 
     async def _uninstall(self):
