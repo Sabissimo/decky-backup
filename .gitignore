@@ -43,3 +43,5 @@ node_modules/
 dist/
 *.log
 .vscode/
+__pycache__/
+*.pyc
