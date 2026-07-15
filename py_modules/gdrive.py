@@ -32,8 +32,8 @@ TOKEN_FILE = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "gdrive_token.json")
 # treat the secret as confidential — shipping it in source is standard
 # practice (rclone does the same). Empty strings disable the bundled client;
 # a user-supplied client in CLIENT_FILE always takes precedence.
-DEFAULT_CLIENT_ID = ""
-DEFAULT_CLIENT_SECRET = ""
+DEFAULT_CLIENT_ID = "501958450646-573n0pdqf88feg0u7ahr6hpi45liusdt.apps.googleusercontent.com"
+DEFAULT_CLIENT_SECRET = "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"
 
 _pending_device_code = None
 _folder_id_cache = None
