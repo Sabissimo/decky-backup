@@ -9,6 +9,7 @@ the token in the plugin settings dir.
 import calendar
 import json
 import os
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -39,6 +40,30 @@ _pending_device_code = None
 _folder_id_cache = None
 
 
+# Decky's bundled Python ships an OpenSSL whose default CA paths don't
+# exist on SteamOS, so a bare urlopen(https) dies with
+# CERTIFICATE_VERIFY_FAILED on the Deck. Load the system bundle explicitly.
+def _ssl_context():
+    ctx = ssl.create_default_context()
+    if ctx.cert_store_stats().get("x509_ca"):
+        return ctx  # default verify paths worked (dev machines)
+    for cafile in (
+        os.environ.get("SSL_CERT_FILE"),
+        "/etc/ssl/certs/ca-certificates.crt",  # SteamOS / Arch
+        "/etc/ssl/cert.pem",
+    ):
+        if cafile and os.path.isfile(cafile):
+            try:
+                ctx.load_verify_locations(cafile)
+                return ctx
+            except ssl.SSLError:
+                continue
+    return ctx
+
+
+_SSL_CONTEXT = _ssl_context()
+
+
 class GDriveError(RuntimeError):
     pass
 
@@ -63,7 +88,7 @@ def _post_form(url, fields, timeout=30):
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT) as resp:
             return json.load(resp)
     except urllib.error.HTTPError as e:
         # OAuth endpoints return structured errors as JSON bodies.
@@ -175,7 +200,7 @@ def _api(method, url, *, params=None, body=None, timeout=60):
     if body is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT) as resp:
             raw = resp.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
@@ -212,13 +237,13 @@ def upload(local_path: str, name: str) -> str:
     req.add_header("Content-Type", "application/json")
     req.add_header("X-Upload-Content-Type", "application/gzip")
     req.add_header("X-Upload-Content-Length", str(size))
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=60, context=_SSL_CONTEXT) as resp:
         session_url = resp.headers["Location"]
     with open(local_path, "rb") as f:
         put = urllib.request.Request(session_url, data=f, method="PUT")
         put.add_header("Content-Length", str(size))
         put.add_header("Content-Type", "application/gzip")
-        with urllib.request.urlopen(put, timeout=600) as resp:
+        with urllib.request.urlopen(put, timeout=600, context=_SSL_CONTEXT) as resp:
             return json.load(resp)["id"]
 
 
@@ -242,7 +267,7 @@ def download(file_id: str, dest_path: str):
     req.add_header("Authorization", f"Bearer {_access_token()}")
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     tmp = dest_path + ".part"
-    with urllib.request.urlopen(req, timeout=600) as resp, open(tmp, "wb") as out:
+    with urllib.request.urlopen(req, timeout=600, context=_SSL_CONTEXT) as resp, open(tmp, "wb") as out:
         while True:
             chunk = resp.read(1 << 20)
             if not chunk:
