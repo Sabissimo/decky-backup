@@ -27,6 +27,14 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 CLIENT_FILE = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "gdrive_client.json")
 TOKEN_FILE = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "gdrive_token.json")
 
+# Shared OAuth client bundled with releases so users can skip the Cloud
+# Console setup. For device-flow ("limited input") clients Google does not
+# treat the secret as confidential — shipping it in source is standard
+# practice (rclone does the same). Empty strings disable the bundled client;
+# a user-supplied client in CLIENT_FILE always takes precedence.
+DEFAULT_CLIENT_ID = ""
+DEFAULT_CLIENT_SECRET = ""
+
 _pending_device_code = None
 _folder_id_cache = None
 
@@ -67,7 +75,9 @@ def _post_form(url, fields, timeout=30):
 
 def has_client() -> bool:
     client = _read_json(CLIENT_FILE)
-    return bool(client and client.get("client_id") and client.get("client_secret"))
+    if client and client.get("client_id") and client.get("client_secret"):
+        return True
+    return bool(DEFAULT_CLIENT_ID and DEFAULT_CLIENT_SECRET)
 
 
 def set_client(client_id: str, client_secret: str):
@@ -90,9 +100,11 @@ def disconnect():
 
 def _client() -> dict:
     client = _read_json(CLIENT_FILE)
-    if not client:
-        raise GDriveError("No Google OAuth client configured")
-    return client
+    if client and client.get("client_id") and client.get("client_secret"):
+        return client
+    if DEFAULT_CLIENT_ID and DEFAULT_CLIENT_SECRET:
+        return {"client_id": DEFAULT_CLIENT_ID, "client_secret": DEFAULT_CLIENT_SECRET}
+    raise GDriveError("No Google OAuth client configured")
 
 
 def auth_start() -> dict:

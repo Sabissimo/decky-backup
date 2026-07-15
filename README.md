@@ -21,7 +21,7 @@ Backups are timestamped `.tar.gz` archives written to internal storage (`~/homeb
 - Back up to internal storage, SD card, or Google Drive
 - Browse, restore, and delete backups from the Quick Access Menu — local and cloud in one list
 - **Per-plugin restore**: pick exactly which plugins' settings/data to restore from a backup (or restore everything)
-- Restore tells you which plugins from the backup are missing so you can reinstall them from the store
+- **Auto-reinstall**: after a restore, missing plugins are offered for one-tap reinstall through Decky's own store install flow (native confirmation prompt, verified downloads)
 - **Automatic backups**: daily or weekly, to any destination, with retention (keep last N — older auto-backups are pruned, manual ones never touched)
 - Backups survive plugin uninstall — they're never deleted automatically
 
@@ -39,6 +39,10 @@ You bring your own (free) OAuth client:
 
 Then hit **Connect Google Drive** in the plugin and follow the code prompt.
 
+### Shipping a shared client (maintainers)
+
+Builds can bundle a shared OAuth client so users skip the Cloud Console setup entirely: create the client once (steps above), then fill in `DEFAULT_CLIENT_ID` / `DEFAULT_CLIENT_SECRET` at the top of `py_modules/gdrive.py`. Google does not treat device-flow client secrets as confidential, so shipping them in source is standard practice (rclone does the same). A user-supplied client in `~/homebrew/settings/decky-backup/gdrive_client.json` always takes precedence. Note: while the Google Cloud project's OAuth consent screen is in "Testing" mode, only listed test users can connect — publish the consent screen for a public release.
+
 ## Automatic backups
 
 Enable in the **Automatic backups** section: pick daily/weekly, a destination, and how many auto-backups to keep. The scheduler checks every 30 minutes while the Deck is awake and catches up after sleep or reboot (first check ~5 minutes after boot). If the chosen destination is unavailable (SD card ejected, Drive disconnected), it falls back to internal storage and says so in the completion toast.
@@ -54,8 +58,8 @@ Every push to `main` builds an installable zip via GitHub Actions (see the workf
 ## Roadmap
 
 - [x] Scheduled automatic backups with retention
-- [ ] Automatic reinstall of missing plugins from the Decky store on restore
-- [ ] Shared OAuth client for store release (skip the Cloud Console setup)
+- [x] Automatic reinstall of missing plugins from the Decky store on restore
+- [x] Shared OAuth client support (maintainer fills in `DEFAULT_CLIENT_ID`/`SECRET`)
 - [ ] Other cloud destinations (Dropbox, OneDrive, rclone remotes)
 - [ ] Controller layout + non-Steam shortcut backup
 

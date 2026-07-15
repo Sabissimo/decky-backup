@@ -122,6 +122,129 @@ const gdriveDisconnect = callable<[], BackupResult>("gdrive_disconnect");
 const getSchedule = callable<[], Schedule>("get_schedule");
 const setSchedule = callable<[patch: Partial<Schedule>], Schedule>("set_schedule");
 
+// Decky store API + CDN, mirroring decky-loader's own frontend/src/store.tsx.
+const DECKY_STORE_URL = "https://plugins.deckbrew.xyz/plugins";
+const DECKY_CDN_URL = "https://cdn.tzatzikiweeb.moe/file/steam-deck-homebrew/versions";
+
+interface StorePluginVersion {
+  name: string;
+  hash: string;
+  artifact?: string | null;
+}
+
+interface StorePlugin {
+  id: number;
+  name: string;
+  versions: StorePluginVersion[];
+}
+
+/**
+ * Ask Decky Loader to install the missing plugins. Goes through the loader's
+ * own utilities/install_plugin(s) routes, so Decky shows its native install
+ * confirmation modal and handles download + verification itself.
+ */
+async function requestReinstall(
+  missing: PluginRef[]
+): Promise<{ requested: string[]; notFound: string[] }> {
+  const response = await fetch(DECKY_STORE_URL);
+  if (!response.ok) throw new Error(`Store returned ${response.status}`);
+  const store: StorePlugin[] = await response.json();
+
+  const requested: string[] = [];
+  const notFound: string[] = [];
+  const requests: {
+    artifact: string;
+    name: string;
+    version: string;
+    hash: string;
+    installType: number;
+  }[] = [];
+
+  for (const plugin of missing) {
+    const entry = store.find((p) => p.name === plugin.name);
+    const version =
+      entry?.versions?.find((v) => v.name === plugin.version) ?? entry?.versions?.[0];
+    if (!entry || !version) {
+      notFound.push(plugin.name);
+      continue;
+    }
+    requests.push({
+      artifact: version.artifact ?? `${DECKY_CDN_URL}/${version.hash}.zip`,
+      name: entry.name,
+      version: version.name,
+      hash: version.hash,
+      installType: 0, // InstallType.INSTALL
+    });
+    requested.push(entry.name);
+  }
+
+  if (requests.length > 0) {
+    const backend = (window as any).DeckyBackend;
+    if (!backend?.call) throw new Error("Decky install API unavailable in this loader version");
+    if (requests.length === 1) {
+      const r = requests[0];
+      backend
+        .call("utilities/install_plugin", r.artifact, r.name, r.version, r.hash, r.installType)
+        .catch((e: unknown) => console.error("Deck Backup: install failed", e));
+    } else {
+      backend
+        .call("utilities/install_plugins", requests)
+        .catch((e: unknown) => console.error("Deck Backup: batch install failed", e));
+    }
+  }
+  return { requested, notFound };
+}
+
+function ReinstallModal({
+  missing,
+  closeModal,
+}: {
+  missing: PluginRef[];
+  closeModal?: () => void;
+}) {
+  return (
+    <ConfirmModal
+      strTitle="Reinstall missing plugins?"
+      strDescription={`This backup includes ${missing.length} plugin(s) that aren't installed. Deck Backup restored their settings; reinstall the plugins themselves from the Decky store? Decky will ask you to confirm the install.`}
+      strOKButtonText="Reinstall"
+      onCancel={closeModal}
+      onOK={async () => {
+        closeModal?.();
+        try {
+          const { requested, notFound } = await requestReinstall(missing);
+          if (requested.length > 0) {
+            toaster.toast({
+              title: "Install requested",
+              body: `Confirm in the Decky prompt: ${requested.join(", ")}`,
+              duration: 8000,
+            });
+          }
+          if (notFound.length > 0) {
+            toaster.toast({
+              title: "Not in the store",
+              body: `Install manually: ${notFound.join(", ")}`,
+              duration: 8000,
+            });
+          }
+        } catch (e) {
+          toaster.toast({
+            title: "Reinstall failed",
+            body: e instanceof Error ? e.message : "Unknown error",
+          });
+        }
+      }}
+    >
+      {missing.map((p) => (
+        <Field
+          key={p.dir}
+          label={p.name}
+          description={p.version ? `v${p.version}` : undefined}
+        />
+      ))}
+    </ConfirmModal>
+  );
+}
+
 const COMPONENTS = [
   { key: "settings", label: "Plugin settings", note: "All plugin configs (PowerTools profiles, etc.)" },
   { key: "themes", label: "CSS themes", note: "CSS Loader themes" },
@@ -191,12 +314,12 @@ function RestoreModal({
       const missing = result.missing_plugins ?? [];
       toaster.toast({
         title: "Restore complete",
-        body:
-          missing.length > 0
-            ? `Reinstall from store: ${missing.map((p) => p.name).join(", ")}`
-            : "Restart Decky Loader to apply.",
+        body: "Restart Decky Loader to apply.",
         duration: 8000,
       });
+      if (missing.length > 0) {
+        showModal(<ReinstallModal missing={missing} />);
+      }
     } else {
       toaster.toast({ title: "Restore failed", body: result.error ?? "Unknown error" });
     }
