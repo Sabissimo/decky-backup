@@ -25,23 +25,21 @@ Backups are timestamped `.tar.gz` archives written to internal storage (`~/homeb
 - **Automatic backups**: daily or weekly, to any destination, with retention (keep last N — older auto-backups are pruned, manual ones never touched)
 - Backups survive plugin uninstall — they're never deleted automatically
 
-## Google Drive setup (one-time, ~2 minutes)
+## Google Drive setup
 
-The plugin authenticates with Google's device flow: it shows a short code on the Deck, you enter it on your phone at the URL shown, done. It uses the `drive.file` scope, so it can only ever see files it created — never the rest of your Drive.
+None. Hit **Connect Google Drive** in the plugin: the Deck shows a short code, you enter it at the URL shown (google.com/device) on your phone or PC, done. The plugin uses the `drive.file` OAuth scope, so it can only ever see files it created itself — never the rest of your Drive.
 
-You bring your own (free) OAuth client:
+This works out of the box because releases bundle a shared OAuth client (in `py_modules/gdrive.py`; its consent screen is published, so any Google account can connect). Google does not treat device-flow client secrets as confidential, so shipping them in source is standard practice — rclone does the same.
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) → create a project (any name)
-2. **APIs & Services → Library** → enable **Google Drive API**
-3. **APIs & Services → OAuth consent screen** → External → fill in the app name + your email → add yourself as a test user
-4. **APIs & Services → Credentials → Create credentials → OAuth client ID** → application type **"TVs and Limited Input devices"**
-5. Copy the Client ID and Client secret into the plugin when prompted (stored only on your Deck, in `~/homebrew/settings/decky-backup/`)
+### Using your own OAuth client (optional)
 
-Then hit **Connect Google Drive** in the plugin and follow the code prompt.
+If you'd rather not use the bundled client, create your own free one in [Google Cloud Console](https://console.cloud.google.com/): new project → enable the **Google Drive API** → OAuth client of type **"TVs and Limited Input devices"** (publish the consent screen, or add yourself as a test user). Then write it to `~/homebrew/settings/decky-backup/gdrive_client.json`:
 
-### Shipping a shared client (maintainers)
+```json
+{"client_id": "your-id.apps.googleusercontent.com", "client_secret": "your-secret"}
+```
 
-Builds can bundle a shared OAuth client so users skip the Cloud Console setup entirely: create the client once (steps above), then fill in `DEFAULT_CLIENT_ID` / `DEFAULT_CLIENT_SECRET` at the top of `py_modules/gdrive.py`. Google does not treat device-flow client secrets as confidential, so shipping them in source is standard practice (rclone does the same). A user-supplied client in `~/homebrew/settings/decky-backup/gdrive_client.json` always takes precedence. Note: while the Google Cloud project's OAuth consent screen is in "Testing" mode, only listed test users can connect — publish the consent screen for a public release.
+A user-supplied client always takes precedence over the bundled one; disconnect and reconnect Drive after changing it.
 
 ## Automatic backups
 
@@ -59,20 +57,22 @@ Every push to `main` builds an installable zip via GitHub Actions (see the workf
 
 - [x] Scheduled automatic backups with retention
 - [x] Automatic reinstall of missing plugins from the Decky store on restore
-- [x] Shared OAuth client support (maintainer fills in `DEFAULT_CLIENT_ID`/`SECRET`)
+- [x] Bundled shared OAuth client (zero-setup Google Drive)
+- [ ] Submission to the official Decky plugin store
 - [ ] Other cloud destinations (Dropbox, OneDrive, rclone remotes)
 - [ ] Controller layout + non-Steam shortcut backup
 
 ## Development
 
 ```bash
-pnpm install
-pnpm run build   # bundles src/ -> dist/index.js via @decky/rollup
+npm ci
+npm run build              # bundles src/ -> dist/index.js via @decky/rollup
+python3 tests/run_tests.py # backend unit tests (decky module is stubbed)
 ```
 
-Deploy to a Deck for testing by copying the plugin folder (with `dist/`, `main.py`, `plugin.json`, `package.json`) to `~/homebrew/plugins/decky-backup` and restarting Decky Loader, or use [decky-cli / VS Code deploy tasks](https://github.com/SteamDeckHomebrew/decky-plugin-template#development) from the plugin template.
+Both also run in CI on every push. Backend is pure-stdlib Python (`main.py` + `py_modules/gdrive.py`), frontend is React/TypeScript (`src/index.tsx`) using `@decky/ui` and `@decky/api`.
 
-Backend is pure-stdlib Python (`main.py`), frontend is React/TypeScript (`src/index.tsx`) using `@decky/ui` and `@decky/api`.
+Deploy to a Deck for testing via Decky settings → Developer → **Install Plugin from URL** (paste a release zip URL), or copy the plugin folder (with `dist/`, `main.py`, `py_modules/`, `plugin.json`, `package.json`) to `~/homebrew/plugins/decky-backup` and restart Decky Loader.
 
 ## License
 

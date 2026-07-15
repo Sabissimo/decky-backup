@@ -28,6 +28,9 @@ jobs:
       - name: Check backend syntax
         run: python3 -m py_compile main.py py_modules/gdrive.py
 
+      - name: Run backend tests
+        run: python3 tests/run_tests.py
+
       - name: Assemble plugin zip
         run: |
           mkdir -p out/decky-backup/dist out/decky-backup/py_modules

@@ -5,7 +5,7 @@
   "api_version": 1,
   "publish": {
     "tags": ["backup", "utility"],
-    "description": "One-tap backup and restore of your entire Decky setup: plugin settings, CSS themes, and installed plugin list. Back up to internal storage or SD card.",
+    "description": "Backup and restore your entire Decky setup — plugin settings, CSS themes, plugin list — to internal storage, SD card, or Google Drive. Per-plugin selective restore, scheduled automatic backups, and one-tap reinstall of missing plugins.",
     "image": "https://opengraph.githubassets.com/1/Sabissimo/decky-backup"
   }
 }
