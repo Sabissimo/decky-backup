@@ -1,6 +1,6 @@
 {
   "name": "decky-backup",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Backup and restore your entire Decky setup — plugin settings, CSS themes, plugin list — locally, to SD card, or to Google Drive, with per-plugin selective restore.",
   "type": "module",
   "scripts": {

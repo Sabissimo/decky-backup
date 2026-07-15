@@ -247,6 +247,9 @@ function ReinstallModal({
   );
 }
 
+// Module scope: survives the QAM content remount after dropdown menus close.
+let rememberedDestId = "internal";
+
 const COMPONENTS = [
   { key: "settings", label: "Plugin settings", note: "All plugin configs (PowerTools profiles, etc.)" },
   { key: "themes", label: "CSS themes", note: "CSS Loader themes" },
@@ -507,7 +510,14 @@ function Content() {
     data: false,
   });
   const [destinations, setDestinations] = useState<Destination[]>([]);
-  const [destId, setDestId] = useState<string>("internal");
+  const [destId, setDestIdState] = useState<string>(rememberedDestId);
+  const setDestId = (id: string) => {
+    // Survive the QAM remount that follows closing a dropdown's
+    // full-screen menu on the Deck - plain useState resets and the
+    // selection snaps back to Internal.
+    rememberedDestId = id;
+    setDestIdState(id);
+  };
   const [estimate, setEstimate] = useState<number | null>(null);
   const [backups, setBackups] = useState<BackupEntry[]>([]);
   const [gdrive, setGdrive] = useState<GDriveStatus | null>(null);
